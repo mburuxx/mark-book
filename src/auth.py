@@ -1,145 +1,123 @@
 """
-This module contains the authentication routes for user registration and user details retrieval.
-It defines a Flask Blueprint for user authentication-related operations.
+This module defines the authentication routes for a Flask application.
+It handles user registration, login, and token refresh functionality.
 """
 
-from flask import Blueprint, request, jsonify
-import validators
-from werkzeug.security import check_password_hash, generate_password_hash
-from src.constants.http_status_code import HTTP_200_OK, HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_401_UNAUTHORIZED, HTTP_409_CONFLICT
+from flask import Blueprint, request, jsonify, redirect
 from src.database import User, db
-from flask_jwt_extended import get_jwt_identity, jwt_required, create_access_token, create_refresh_token
-
-# Create a Blueprint for authentication routes
-auth = Blueprint(
-    "auth",
-    __name__,
-    url_prefix="/api/v1/auth"
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_jwt_extended import create_access_token, jwt_required, create_refresh_token, get_jwt_identity
+from flasgger import swag_from
+import validators
+from src.constants.http_status_code import (
+    HTTP_200_OK,
+    HTTP_201_CREATED,
+    HTTP_401_UNAUTHORIZED,
+    HTTP_409_CONFLICT,
+    HTTP_400_BAD_REQUEST,
 )
 
-@auth.post("/register")
-def register():
-    """
-    Registers a new user.
+# Initialize the Blueprint for authentication routes
+auth = Blueprint("auth", __name__, url_prefix="/api/v1/auth")
 
-    This route accepts a JSON payload with 'username', 'email', and 'password', performs
-    validation, and creates a new user in the database if all checks pass.
+
+@auth.post("/signup")
+@swag_from("./docs/auth/register.yml")
+def create_user():
+    """
+    Handles user registration.
+
+    Validates the user input, checks for duplicate usernames or emails,
+    and creates a new user in the database.
 
     Returns:
-        Response: A JSON response with a message indicating success or an error, along with an HTTP status code.
+        JSON response with user details on success or error messages on failure.
     """
-    # Extract user details from the request
     username = request.json["username"]
     email = request.json["email"]
     password = request.json["password"]
+    pw_hash = generate_password_hash(password)
 
-    # Validate the length of the password
     if len(password) < 6:
-        return jsonify({"error": "Password is too short!"}), HTTP_400_BAD_REQUEST
+        return jsonify({"password": ["Passwords should be at least 6 characters long"]}), HTTP_400_BAD_REQUEST
 
-    # Validate the length of the username
-    if len(username) < 4:
-        return jsonify({"error": "Username is too short!"}), HTTP_400_BAD_REQUEST
+    if len(username) < 3:
+        return jsonify({"username": ["Usernames should be at least 3 characters long"]}), HTTP_400_BAD_REQUEST
 
-    # Validate the email format
     if not validators.email(email):
-        return jsonify({"error": "Please enter a valid email address"}), HTTP_400_BAD_REQUEST
+        return jsonify({"email": ["Email is of invalid format"]}), HTTP_400_BAD_REQUEST
 
-    # Check if the email is already taken
+    if not username.isalnum() or " " in username:
+        return jsonify({"username": ["Username should only contain alphanumeric characters, no spaces"]}), HTTP_400_BAD_REQUEST
+
     if User.query.filter_by(email=email).first() is not None:
-        return jsonify({"error": "This email is already taken!"}), HTTP_409_CONFLICT
-    
-    # Check if the username is already taken
+        return jsonify({"email": ["Email is already taken"]}), HTTP_409_CONFLICT
+
     if User.query.filter_by(username=username).first() is not None:
-        return jsonify({"error": "This username is already taken!"}), HTTP_409_CONFLICT
+        return jsonify({"username": ["Username is already taken"]}), HTTP_409_CONFLICT
 
-    # Hash the user's password
-    pwd_hash = generate_password_hash(password)
-
-    # Create a new user instance
-    user = User(username=username, password=pwd_hash, email=email)
-    
-    # Add the user to the session and commit to the database
+    user = User(username=username, email=email, password=pw_hash)
     db.session.add(user)
     db.session.commit()
-    
-    # Return a success message and user details
-    return jsonify({
-        "message": "User successfully created",
-        "user": {
-            "username": username,
-            "email": email
+
+    return jsonify(
+        {
+            "user": {
+                "username": username,
+                "email": email,
+            }
         }
-    }), HTTP_201_CREATED
+    ), HTTP_201_CREATED
+
 
 @auth.post("/login")
+@swag_from("./docs/auth/login.yml")
 def login():
     """
-    Logs in an existing user.
+    Handles user login.
 
-    This route accepts a JSON payload with 'email' and 'password', verifies the credentials,
-    and generates JWT tokens for the user if the login is successful.
+    Validates user credentials and returns access and refresh tokens
+    on successful authentication.
 
     Returns:
-        Response: A JSON response containing access and refresh tokens, user details, 
-        or an error message with the appropriate HTTP status code.
+        JSON response with user details and tokens on success or an error message on failure.
     """
-    # Extract email and password from the request
     email = request.json.get("email", "")
     password = request.json.get("password", "")
-
-    # Retrieve the user by email from the database
     user = User.query.filter_by(email=email).first()
 
-    # Check if the user exists
     if user:
-        # Verify if the provided password matches the stored password hash
-        is_pass_correct = check_password_hash(user.password, password)
-        if is_pass_correct:
-            # Generate JWT tokens for the user (access and refresh tokens)
-            refresh = create_refresh_token(identity=user.id)
-            access = create_access_token(identity=user.id)
+        pass_correct = check_password_hash(user.password, password)
+        if pass_correct:
+            access_token = create_access_token(identity=user.id)
+            refresh_token = create_refresh_token(identity=user.id)
 
-            # Return a response with the tokens and user details
-            return jsonify({
-                "user": {
-                    "refresh": refresh,
-                    "access": access,
-                    "username": user.username,
-                    "email": user.email
+            return jsonify(
+                {
+                    "user": {
+                        "username": user.username,
+                        "email": user.email,
+                        "token": access_token,
+                        "refresh_token": refresh_token,
+                    }
                 }
-            }), HTTP_200_OK
-        
-    # If user not found or credentials are incorrect, return an error message
-    return jsonify({"error": "Wrong credentials!"}), HTTP_401_UNAUTHORIZED
+            ), HTTP_200_OK
 
-@auth.get("/me")
-@jwt_required()
-def me():
+    return jsonify({"message": "Invalid credentials"}), HTTP_401_UNAUTHORIZED
+
+
+@auth.post("/token/refresh")
+@jwt_required(refresh=True)
+@swag_from("./docs/auth/refresh_token.yml")
+def refresh():
     """
-    Retrieves the details of the currently authenticated user.
+    Handles token refresh.
 
-    This route can be used to fetch the current user's profile information.
+    Generates a new access token using a valid refresh token.
 
     Returns:
-        Response: A JSON response with actual user details from the database.
+        JSON response with a new access token.
     """
-    user_id = get_jwt_identity()
-
-    user = User.query.filter_by(id=user_id).first()
-
-    return  jsonify({
-        "username": user.username,
-        "email": user.email
-        }), HTTP_200_OK
-
-@auth.post('/token/refresh')
-@jwt_required(refresh=True)
-def refresh_users_token():
     identity = get_jwt_identity()
-
-    access = create_access_token(identity=identity)
-
-    return jsonify({
-        'access' : access
-    }), HTTP_200_OK
+    access_token = create_access_token(identity=identity)
+    return jsonify({"access_token": access_token}), HTTP_200_OK
