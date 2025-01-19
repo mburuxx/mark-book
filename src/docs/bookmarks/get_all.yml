@@ -1,0 +1,57 @@
+GET a list of Bookmarks
+---
+tags:
+  - Bookmarks
+get:
+  parameters:
+    - in: header
+      name: Authorization
+      required: true
+
+  responses:
+    200:
+      description: A user is signed in, gets a list of bookmarks
+    
+    401:
+      description: A user needs to authenticate
+
+post:
+  parameters:
+    - in: query
+      name: page
+      schema:
+        type: integer
+      description: The page for the result set
+
+    - in: query
+      name: per_page
+      schema:
+        type: integer
+      description: The numbers of items to return per page
+
+    - in: header
+      name: Authorization
+      required: true
+    - name: body
+      description: The body should contain the Bookmark data
+      in: body
+      required: true
+      schema:
+        type: object
+        required:
+          - "url"
+        properties:
+          url:
+            type: "url"
+            format: url
+            example: "https://www.programiz.com/"
+          body:
+            type: "string"
+            example: this site is cool
+  responses:
+    201:
+      description: Bookmark created
+
+    400:
+      description: Fails to create due to bad request data
+    
