@@ -8,7 +8,7 @@ import validators
 from werkzeug.security import check_password_hash, generate_password_hash
 from src.constants.http_status_code import HTTP_200_OK, HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_401_UNAUTHORIZED, HTTP_409_CONFLICT
 from src.database import User, db
-from flask_jwt_extended import create_access_token, create_refresh_token
+from flask_jwt_extended import get_jwt_identity, jwt_required, create_access_token, create_refresh_token
 
 # Create a Blueprint for authentication routes
 auth = Blueprint(
@@ -114,6 +114,7 @@ def login():
     return jsonify({"error": "Wrong credentials!"}), HTTP_401_UNAUTHORIZED
 
 @auth.get("/me")
+@jwt_required()
 def me():
     """
     Retrieves the details of the currently authenticated user.
@@ -121,7 +122,24 @@ def me():
     This route can be used to fetch the current user's profile information.
 
     Returns:
-        Response: A JSON response with a placeholder message. In a real application, it should return
-        actual user details from the database.
+        Response: A JSON response with actual user details from the database.
     """
-    return {"user": "me"}
+    user_id = get_jwt_identity()
+
+    user = User.query.filter_by(id=user_id).first()
+
+    return  jsonify({
+        "username": user.username,
+        "email": user.email
+        }), HTTP_200_OK
+
+@auth.post('/token/refresh')
+@jwt_required(refresh=True)
+def refresh_users_token():
+    identity = get_jwt_identity()
+
+    access = create_access_token(identity=identity)
+
+    return jsonify({
+        'access' : access
+    }), HTTP_200_OK
