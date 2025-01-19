@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 """
 This module contains the authentication routes for user registration and user details retrieval.
 It defines a Flask Blueprint for user authentication-related operations.
@@ -7,8 +6,9 @@ It defines a Flask Blueprint for user authentication-related operations.
 from flask import Blueprint, request, jsonify
 import validators
 from werkzeug.security import check_password_hash, generate_password_hash
-from src.constants.http_status_code import HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_409_CONFLICT
+from src.constants.http_status_code import HTTP_200_OK, HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_401_UNAUTHORIZED, HTTP_409_CONFLICT
 from src.database import User, db
+from flask_jwt_extended import create_access_token, create_refresh_token
 
 # Create a Blueprint for authentication routes
 auth = Blueprint(
@@ -71,6 +71,47 @@ def register():
             "email": email
         }
     }), HTTP_201_CREATED
+
+@auth.post("/login")
+def login():
+    """
+    Logs in an existing user.
+
+    This route accepts a JSON payload with 'email' and 'password', verifies the credentials,
+    and generates JWT tokens for the user if the login is successful.
+
+    Returns:
+        Response: A JSON response containing access and refresh tokens, user details, 
+        or an error message with the appropriate HTTP status code.
+    """
+    # Extract email and password from the request
+    email = request.json.get("email", "")
+    password = request.json.get("password", "")
+
+    # Retrieve the user by email from the database
+    user = User.query.filter_by(email=email).first()
+
+    # Check if the user exists
+    if user:
+        # Verify if the provided password matches the stored password hash
+        is_pass_correct = check_password_hash(user.password, password)
+        if is_pass_correct:
+            # Generate JWT tokens for the user (access and refresh tokens)
+            refresh = create_refresh_token(identity=user.id)
+            access = create_access_token(identity=user.id)
+
+            # Return a response with the tokens and user details
+            return jsonify({
+                "user": {
+                    "refresh": refresh,
+                    "access": access,
+                    "username": user.username,
+                    "email": user.email
+                }
+            }), HTTP_200_OK
+        
+    # If user not found or credentials are incorrect, return an error message
+    return jsonify({"error": "Wrong credentials!"}), HTTP_401_UNAUTHORIZED
 
 @auth.get("/me")
 def me():
